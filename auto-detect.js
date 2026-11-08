@@ -79,37 +79,84 @@
      for(const parts of segments){
        lines.push({text:parts.map(x=>x.str).join(' '),x:parts[0].x,
          y:Math.min(...parts.map(x=>x.y)),right:Math.max(...parts.map(x=>x.x+x.w)),
-         pageWidth:viewport.width,pageHeight:viewport.height});
+         pageWidth:viewport.width,pageHeight:viewport.height,
+         parts:parts.map(x=>({text:x.str,x:x.x,y:x.y,w:x.w}))});
      }
    }
    return lines;
  }
  function detectPage(lines,pageNumber){
    const joined=joinNearLines(lines);
-   const anchors=[],subjects=[];
+   const anchors=[],subjects=[],standalone=[];
+   const add=(found,l,raw)=>{
+     if(!found||l.y<18||l.y>l.pageHeight-16||l.x>l.pageWidth*.83)return;
+     anchors.push({...found,page:pageNumber,y:l.y,x:l.x,raw,
+       height:l.pageHeight,width:l.pageWidth});
+   };
    for(const l of [...lines,...joined]){
      const trimmed=l.text.trim();
      if(HEADERS.test(trimmed))subjects.push({y:l.y,label:trimmed});
-     const found=classify(trimmed);
-     if(!found||l.y<18||l.y>l.pageHeight-16)continue;
-     // A question number must begin near a paragraph, not a far-right page footer.
-     if(l.x>l.pageWidth*.83)continue;
-     anchors.push({...found,page:pageNumber,y:l.y,x:l.x,raw:trimmed,
-       height:l.pageHeight,width:l.pageWidth});
+     add(classify(trimmed),l,trimmed);
+     // A PDF may put Q4, Q5 and Q6 into one joined text row. Recover actual
+     // marker positions from PDF.js text fragments, instead of silently joining.
+     for(const part of l.parts||[]){
+       const piece=part.text.trim(),found=classify(piece);
+       if(found)add(found,{...l,x:part.x,y:part.y},piece);
+     }
+     if(!l.compound){
+       // Some exam PDFs render the label "5." on its own line, followed by
+       // the question text on the next line. This was making Q4 swallow Q5/Q6.
+       const m=/^(\d{1,3})\s*([.)])\s*$/.exec(trimmed);
+       if(m&&+m[1]>=1&&+m[1]<=75&&l.x<l.pageWidth*.65)
+         standalone.push({number:+m[1],confidence:'low',style:'standalone',
+           page:pageNumber,y:l.y,x:l.x,raw:trimmed,
+           height:l.pageHeight,width:l.pageWidth});
+     }
    }
+   anchors.sort((a,b)=>a.y-b.y||a.x-b.x);
    const deduped=[];
    for(const a of anchors){
-     if(deduped.some(x=>x.number===a.number&&Math.abs(x.y-a.y)<10&&Math.abs(x.x-a.x)<20))continue;
+     if(deduped.some(x=>x.number===a.number&&Math.abs(x.y-a.y)<13&&Math.abs(x.x-a.x)<25))continue;
      deduped.push(a);
    }
-   return {page:pageNumber,anchors:deduped,subjects,lineCount:lines.length,compoundMatches:joined.length};
+   return {page:pageNumber,anchors:deduped,standalone,subjects,lineCount:lines.length,compoundMatches:joined.length};
  }
  function planPages(pages){
    const result=[],warnings=[];
+   const known=new Set(pages.flatMap(p=>(p.anchors||[]).map(a=>a.number)));
+   const missing=new Set(Array.from({length:75},(_,i)=>i+1).filter(n=>!known.has(n)));
+   const solo=pages.flatMap(p=>p.standalone||[]);
+   // Recover isolated "5." / "6." markers only when they're plausible missing
+   // questions within a sequence of actual numbered questions. Flag each one.
+   const byNumber=new Map();
+   for(const a of solo){
+     if(!missing.has(a.number))continue;
+     if(!byNumber.has(a.number))byNumber.set(a.number,[]);
+     byNumber.get(a.number).push(a);
+   }
+   const recovered=[];
+   for(const [num,options] of byNumber){
+     if(options.length!==1)continue; // ambiguous repeated number
+     const prev=known.has(num-1)||byNumber.has(num-1);
+     const next=known.has(num+1)||byNumber.has(num+1);
+     if(!prev&&!next)continue;
+     const a=options[0];
+     const samePage=pages.find(p=>p.page===a.page)?.anchors||[];
+     const aligned=samePage.length===0||samePage.some(b=>Math.abs(b.x-a.x)<Math.max(55,a.width*.14));
+     if(!aligned)continue;
+     recovered.push({...a,confidence:'low',recovered:true});
+   }
+   const recoveredByPage=new Map();
+   for(const a of recovered){
+     if(!recoveredByPage.has(a.page))recoveredByPage.set(a.page,[]);
+     recoveredByPage.get(a.page).push(a);
+   }
+   if(recovered.length)warnings.push('Recovered '+recovered.length+' standalone question numbers. Review these crops carefully before testing.');
+
    for(const page of pages){
      if(page.error){warnings.push('Page '+page.page+': '+page.error);continue;}
      if(page.lineCount<6&&!page.anchors?.length)warnings.push('Page '+page.page+': little selectable text and no question markers. Scanned PDFs may need OCR.');
-     const anchors=page.anchors||[];
+     const anchors=[...(page.anchors||[]),...(recoveredByPage.get(page.page)||[])];
      // Detect two-column sheets only if both halves contain multiple question anchors.
      const left=anchors.filter(a=>a.x<a.width*.49),right=anchors.filter(a=>a.x>=a.width*.49);
      const twoCol=left.length>=2&&right.length>=2;
@@ -124,7 +171,7 @@
        const x=twoCol?(isRight?.51:.035):.035, width=twoCol?.455:.93;
        const rect={page:page.page,x,y:top,w:width,h:Math.max(.015,bottom-top)};
        const flags=[];
-       if(a.confidence!=='high')flags.push('Weak question marker');
+       if(a.confidence!=='high')flags.push(a.recovered?'Recovered standalone number — check entire question and options':'Weak question marker');
        if(!next)flags.push('Last question in page/column: check page-break continuation');
        if(rect.h<.055)flags.push('Unusually short crop');
        if(rect.h>.75)flags.push('Unusually long crop');
@@ -142,16 +189,16 @@
    const numeric=result.map(x=>x.printedNumber);
    const unique=new Set(numeric);
    const fullSequence=unique.size===numeric.length&&numeric.every(n=>n>=1&&n<=75);
-   const missing=fullSequence?Array.from({length:75},(_,i)=>i+1).filter(n=>!unique.has(n)):[];
+   const missingNumbers=fullSequence?Array.from({length:75},(_,i)=>i+1).filter(n=>!unique.has(n)):[];
    if(result.length!==75){
      warnings.push('Detected '+result.length+' candidates, not 75. Review missed/extra boundaries.');
-     if(missing.length)warnings.unshift('Missing printed question numbers: '+missing.join(', '));
+     if(missingNumbers.length)warnings.unshift('Missing printed question numbers: '+missingNumbers.join(', '));
      else if(numeric.length&&unique.size<numeric.length)
        warnings.unshift('Printed question numbers repeat (possibly reset by subject). Check missing questions by page and subject, not only number.');
    }
    const emptyPages=pages.filter(p=>!p.error&&(!p.anchors||!p.anchors.length));
    if(emptyPages.length)warnings.push('Pages with no detected question heading: '+emptyPages.map(p=>p.page).join(', ')+'. Some may contain continuations; inspect them.');
-   return {candidates:result,warnings,missingNumbers:missing,pagesWithoutHeadings:emptyPages.map(p=>p.page)};
+   return {candidates:result,warnings,missingNumbers:missingNumbers,pagesWithoutHeadings:emptyPages.map(p=>p.page),recoveredCount:recovered.length};
  }
  root.ExamForgeAutoDetect=Object.freeze({classify,getLines,detectPage,planPages});
 })(window);
