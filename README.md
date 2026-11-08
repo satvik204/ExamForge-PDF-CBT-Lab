@@ -13,6 +13,18 @@ Open the GitHub Pages site or `index.html` in Chrome with internet access, then:
 5. Enter and **verify** the corresponding question paper's answer key. The program does not guess the key.
 6. Start CBT with timer, palette, zoom, mark-for-review and scoring. Optionally export ExamForge EF1 code; image-embedded codes may exceed the main ExamForge live room limit.
 
+## If auto-detection finds only 54 of 75 questions
+
+The scanner now recognizes more NTA question-label variants, including labels split across PDF text lines. It preserves unique original printed Q numbers rather than renumbering the remaining crops, and displays missing printed numbers and pages with no heading detection.
+
+1. Refresh GitHub Pages with Ctrl + Shift + R so the updated detection script loads.
+2. Upload the same original paper and select Auto-detect & crop all questions again.
+3. If fewer than 75 candidates remain, click **Download scan report** below the detection button. This JSON contains page numbers, detected question markers, their locations and missing numbers, **not the PDF or actual question text**.
+4. Share the scan report and the exact PDF with the developer for layout-specific improvements. Do not use an incomplete crop set for a complete 75-question scored exam.
+5. Manual Recrop is available to recover isolated missing questions, but it should not be necessary to manually crop all 75 questions.
+
+**Important:** Detecting a printed number doesn't prove the crop contains all options, formulas or a multi-page continuation. Check flagged crops and the resulting CBT before using it for a serious test.
+
 ## How the new auto-detector works
 
 - `auto-detect.js` obtains text items and coordinates from PDF.js. It recognizes explicit markers such as `Question Number : 1`, `Q. 1`, `Q1`, and conservative numbered paragraph headings. It also attempts two-column splitting.
