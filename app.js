@@ -70,7 +70,7 @@ async function extractCrop(crop,scale=1.7){
  return can.toDataURL('image/jpeg',.84);
 }
 async function preview(){try{const img=new Image();img.src=await extractCrop(S.select,1.3);img.alt='Cropped question preview';$('cropPreview').replaceChildren(img);$('saveCrop').disabled=false}catch(e){notify(e.message)}}
-function nextNum(){return S.questions.length?Math.max(...S.questions.map(q=>q.num))+1:1}
+function nextNum(){const used=new Set(S.questions.map(q=>q.num));for(let i=1;i<=300;i++)if(!used.has(i))return i;return 301}
 function typeChanged(){$('qMetaSingle').hidden=$('qType').value!=='single';$('qMetaNumber').hidden=$('qType').value!=='numerical'}
 $('qType').onchange=typeChanged;
 function resetEditor(){S.select=null;S.edit=-1;drawBox();$('cropPreview').textContent='Draw a box on the PDF to preview the crop.';$('saveCrop').disabled=true;$('modePill').textContent='New crop';$('cancelEdit').hidden=true;$('qNumber').value=nextNum()}
@@ -170,12 +170,20 @@ async function scanQuestions(){
   const orders=$('autoSubjectOrder').value.split(',');
   const candidates=plan.candidates;
   const groups=new Map();
+  const printed=candidates.map(q=>q.printedNumber);
+  const preserveNumbers=printed.every(n=>Number.isInteger(n)&&n>=1&&n<=75)
+    &&new Set(printed).size===printed.length;
   for(let i=0;i<candidates.length;i++){
-   const q=candidates[i],index=Math.floor(i/25);
-   q.num=i+1;
+   const q=candidates[i];
+   // Never renumber Q55 to Q40 just because 15 earlier boundaries went missing.
+   q.num=preserveNumbers?q.printedNumber:i+1;
+   const position=preserveNumbers?q.num-1:i;
+   const index=Math.floor(position/25);
    q.subject=orders[Math.min(index,2)]||'Physics';
-   q.type=(i%25)>=20?'numerical':'single';
-   if(candidates.length!==75)q.flags.push('Subject/type inferred by position: verify');
+   q.type=(position%25)>=20?'numerical':'single';
+   if(candidates.length!==75)q.flags.push(preserveNumbers
+     ?'Incomplete scan: missing printed numbers must be recovered'
+     :'Subject/type inferred by position: verify');
    if(!groups.has(q.page))groups.set(q.page,[]);
    groups.get(q.page).push(q);
   }
@@ -215,6 +223,12 @@ async function scanQuestions(){
   S.questions=generated.sort((a,b)=>a.num-b.num);
   invalidateCode();resetEditor();renderSaved();
   scanSummary(S.questions,plan.warnings);
+  if(plan.missingNumbers?.length){
+    const hint=document.createElement('p');
+    hint.className='scan-warning';
+    hint.textContent='Missing printed questions ('+plan.missingNumbers.length+'): '+plan.missingNumbers.join(', ')+'. You can manually crop only these gaps; question numbering is preserved.';
+    $('autoScanReport').prepend(hint);
+  }
   $('autoScanPill').textContent=plan.candidates.length===75?'REVIEW CROPS':'NEEDS REVIEW';
   notify('Automatically cropped '+S.questions.length+' candidates. Review flagged questions; no answers were guessed.');
  }catch(e){
