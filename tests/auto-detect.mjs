@@ -24,6 +24,7 @@ assert.equal(e.classify('Question Number : 1').number,1);
 assert.equal(e.classify('Q. 2 Example').number,2);
 assert.equal(e.classify('3. Find the correct result').number,3);
 assert.equal(e.classify('Option 1. False'),null);
+const sampleFallback=(n,y)=>({text:'Question Number : '+n,x:32,y,right:232,pageWidth:700,pageHeight:900});
 assert.equal(e.classify('Question No. 8').number,8);
 assert.equal(e.classify('Question ID : 27').number,27);
 const split=e.detectPage([
@@ -37,7 +38,6 @@ const gaps=e.planPages([e.detectPage([sampleFallback(1,85),sampleFallback(3,400)
 assert.deepEqual(Array.from(gaps.missingNumbers.slice(0,3)),[2,4,5]);
 
 const sample=(n,y,x=32)=>({text:'Question Number : '+n,x,y,right:x+200,pageWidth:700,pageHeight:900});
-const sampleFallback=(n,y)=>({text:'Question Number : '+n,x:32,y,right:232,pageWidth:700,pageHeight:900});
 const lines=[sample(1,100),sample(2,430),sample(3,720)];
 const detection=e.detectPage(lines,1);
 assert.equal(detection.anchors.length,3);
