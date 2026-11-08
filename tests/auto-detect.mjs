@@ -32,6 +32,14 @@ const planned=e.planPages([detection]);
 assert.equal(planned.candidates.length,3);
 assert.ok(planned.candidates[0].rect.h>.1);
 assert.equal(planned.candidates[2].flags.length>0,true);
+const twoColumns=e.detectPage([
+ sample(1,90,30),sample(2,340,30),sample(3,630,30),
+ sample(4,90,400),sample(5,340,400),sample(6,630,400)
+],1);
+const twoPlan=e.planPages([twoColumns]);
+assert.equal(twoPlan.candidates.length,6);
+assert.deepEqual(Array.from(twoPlan.candidates.map(x=>x.printedNumber)),[1,2,3,4,5,6]);
+assert.ok(twoPlan.candidates.every(x=>x.rect.w<.5),'Two-column crops must stay inside their column');
 const all=[];
 for(let p=1;p<=15;p++){
  const rows=[];
