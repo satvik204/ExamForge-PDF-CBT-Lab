@@ -8,6 +8,7 @@ document.querySelectorAll('.step').forEach(x=>x.onclick=()=>setTab(x.dataset.tab
 $('helpBtn').onclick=()=>$('helpDialog').showModal();
 $('helpClose').onclick=()=>$('helpDialog').close();
 async function importPdf(file){
+ if(activeScan)return notify('Finish or cancel the current auto-scan first.');
  if(!file||!(/\.pdf$/i.test(file.name)||file.type==='application/pdf'))return notify('Choose a PDF.');
  if(file.size>60*1024*1024)return notify('Maximum PDF size is 60 MB.');
  if(!window.pdfjsLib)return notify('PDF.js is unavailable. Check your internet.');
@@ -83,12 +84,132 @@ $('saveCrop').onclick=async()=>{
  const answer=value===''?null:type==='single'?value:Number(value);
  try{
   const image=await extractCrop(S.select,1.8);
-  const item={num,subject:$('qSubject').value,type,answer,rect:{...S.select},image};
+  const item={num,subject:$('qSubject').value,type,answer,rect:{...S.select},image,flags:[],autoDetected:false};
   if(S.edit<0)S.questions.push(item);else S.questions[S.edit]=item;
   S.questions.sort((a,b)=>a.num-b.num);
   invalidateCode();resetEditor();renderSaved();notify('Saved question '+num);
  }catch(e){notify('Cannot save crop: '+e.message)}
 };
+
+/* Automatic batch conversion: PDF.js text coordinates -> full-resolution page image crops.
+   Ambiguous boundaries (and pages without selectable text) are flagged, never silently trusted.
+*/
+let activeScan=false, cancelScan=false;
+function scanProgress(frac,message){
+ $('autoProgressBar').style.width=(Math.round(Math.max(0,Math.min(1,frac))*100))+'%';
+ $('autoProgressLabel').textContent=message;
+}
+function scanSummary(candidates,warnings){
+ const flagged=candidates.filter(q=>q.flags.length);
+ const box=$('autoScanReport');box.replaceChildren();
+ const headline=document.createElement('strong');
+ headline.textContent=candidates.length+' question crops detected · '+flagged.length+' flagged for review';
+ box.append(headline);
+ const notice=document.createElement('p');notice.className='hint';
+ notice.textContent=candidates.length===75
+  ?'75 candidates found. Check the flagged page endings, subject order, options and diagrams before using CBT.'
+  :'Not exactly 75 candidates: inspect missing/duplicate question numbers before using CBT.';
+ box.append(notice);
+ const list=document.createElement('div');list.className='scan-warnings';
+ const entries=[...warnings,...flagged.slice(0,35).map(q=>'Q'+q.num+' · page '+q.rect.page+': '+q.flags.join('; '))];
+ for(const warning of entries){
+  const item=document.createElement('p');item.textContent='⚠ '+warning;list.append(item);
+ }
+ if(flagged.length>35){
+  const more=document.createElement('p');more.textContent='And '+(flagged.length-35)+' more flagged crops in the Saved questions list.';list.append(more);
+ }
+ box.append(list);
+}
+async function scanQuestions(){
+ if(activeScan)return;
+ if(!S.doc)return notify('Upload a question paper first.');
+ if(!window.ExamForgeAutoDetect)return notify('Question detector did not load. Refresh the page.');
+ if(S.questions.length&&!confirm('Replace the current question crops with newly detected ones? Your existing answers will be cleared.'))return;
+ activeScan=true;cancelScan=false;
+ $('autoDetectBtn').disabled=true;$('autoCancelBtn').hidden=false;
+ $('autoScanPill').textContent='SCANNING';
+ const engine=window.ExamForgeAutoDetect;
+ try{
+  const pages=[];
+  for(let n=1;n<=S.doc.numPages;n++){
+   if(cancelScan)throw Error('Scan cancelled; existing questions were not changed');
+   scanProgress((n-1)/S.doc.numPages*.48,'Reading PDF text: page '+n+' / '+S.doc.numPages);
+   try{
+    const page=await S.doc.getPage(n);
+    const viewport=page.getViewport({scale:1});
+    const text=await page.getTextContent({normalizeWhitespace:true});
+    const lines=engine.getLines(text,viewport,pdfjsLib);
+    pages.push(engine.detectPage(lines,n));
+   }catch(e){
+    pages.push({page:n,error:e.message,lineCount:0,anchors:[]});
+   }
+   if(n%4===0)await new Promise(r=>setTimeout(r,0));
+  }
+  const plan=engine.planPages(pages);
+  if(!plan.candidates.length)throw Error('No numbered questions found. For scanned/image-only PDFs use an OCR-enabled version or manual crop.');
+  if(plan.candidates.length>180)throw Error('Detected too many possible questions ('+plan.candidates.length+'). Review the PDF layout before converting.');
+  const orders=$('autoSubjectOrder').value.split(',');
+  const candidates=plan.candidates;
+  const groups=new Map();
+  for(let i=0;i<candidates.length;i++){
+   const q=candidates[i],index=Math.floor(i/25);
+   q.num=i+1;
+   q.subject=orders[Math.min(index,2)]||'Physics';
+   q.type=(i%25)>=20?'numerical':'single';
+   if(candidates.length!==75)q.flags.push('Subject/type inferred by position: verify');
+   if(!groups.has(q.page))groups.set(q.page,[]);
+   groups.get(q.page).push(q);
+  }
+  const generated=[];
+  const pagesWithQuestions=[...groups.keys()].sort((a,b)=>a-b);
+  let count=0;
+  for(const n of pagesWithQuestions){
+   if(cancelScan)throw Error('Scan cancelled; existing questions were not changed');
+   const page=await S.doc.getPage(n);
+   const view=page.getViewport({scale:1.8});
+   const whole=document.createElement('canvas');
+   whole.width=Math.ceil(view.width);whole.height=Math.ceil(view.height);
+   const wholeCtx=whole.getContext('2d',{alpha:false});
+   wholeCtx.fillStyle='#fff';wholeCtx.fillRect(0,0,whole.width,whole.height);
+   await page.render({canvasContext:wholeCtx,viewport:view}).promise;
+   for(const q of groups.get(n)){
+    if(cancelScan)throw Error('Scan cancelled; existing questions were not changed');
+    const r=q.rect,sx=Math.round(r.x*whole.width),sy=Math.round(r.y*whole.height);
+    const sw=Math.max(1,Math.min(whole.width-sx,Math.round(r.w*whole.width)));
+    const sh=Math.max(1,Math.min(whole.height-sy,Math.round(r.h*whole.height)));
+    const factor=Math.min(1,1500/sw,2100/sh);
+    const crop=document.createElement('canvas');
+    crop.width=Math.max(1,Math.round(sw*factor));crop.height=Math.max(1,Math.round(sh*factor));
+    const c=crop.getContext('2d',{alpha:false});
+    c.fillStyle='#fff';c.fillRect(0,0,crop.width,crop.height);
+    c.drawImage(whole,sx,sy,sw,sh,0,0,crop.width,crop.height);
+    generated.push({num:q.num,subject:q.subject,type:q.type,answer:null,
+      rect:{...q.rect},image:crop.toDataURL('image/jpeg',.80),
+      flags:[...q.flags],autoDetected:true,printedNumber:q.printedNumber});
+    count++;
+   }
+   whole.width=0;whole.height=0;
+   scanProgress(.48+.52*count/candidates.length,'Creating original-PDF image crops: '+count+' / '+candidates.length);
+   await new Promise(resolve=>setTimeout(resolve,0));
+  }
+  if(cancelScan)throw Error('Scan cancelled; existing questions were not changed');
+  S.questions=generated.sort((a,b)=>a.num-b.num);
+  invalidateCode();resetEditor();renderSaved();
+  scanSummary(S.questions,plan.warnings);
+  $('autoScanPill').textContent=plan.candidates.length===75?'REVIEW CROPS':'NEEDS REVIEW';
+  notify('Automatically cropped '+S.questions.length+' candidates. Review flagged questions; no answers were guessed.');
+ }catch(e){
+  $('autoScanPill').textContent='CHECK PDF';
+  scanProgress(0,e.message);
+  notify(e.message);
+  console.error('Automatic scan:',e);
+ }finally{
+  activeScan=false;cancelScan=false;$('autoDetectBtn').disabled=false;$('autoCancelBtn').hidden=true;
+ }
+}
+$('autoDetectBtn').onclick=scanQuestions;
+$('autoCancelBtn').onclick=()=>{cancelScan=true;$('autoCancelBtn').disabled=true};
+
 function invalidateCode(){S.code='';$('exportOutput').value='';$('copyCode').disabled=true;$('downloadCode').disabled=true}
 function updateCount(){$('sideCount').textContent=S.questions.length+' questions';$('savedCount').textContent=S.questions.length;$('progressBar').style.width=Math.min(100,S.questions.length/75*100)+'%'}
 function renderSaved(){
@@ -99,7 +220,7 @@ function renderSaved(){
   const image=new Image();image.src=q.image;image.alt='Question '+q.num;
   const body=document.createElement('div');body.className='saved-body';
   const title=document.createElement('strong');title.textContent='Q'+q.num+' · '+q.subject;
-  const sub=document.createElement('small');sub.textContent='Page '+q.rect.page+' · '+(q.answer===null?'Answer missing':'Answer: '+q.answer);body.append(title,sub);
+  const sub=document.createElement('small');sub.textContent='Page '+q.rect.page+' · '+(q.answer===null?'Answer missing':'Answer: '+q.answer);body.append(title,sub);if(q.flags?.length){row.classList.add('scan-flagged');const warning=document.createElement('small');warning.className='scan-warning';warning.textContent='⚠ Review: '+q.flags.join('; ');body.append(warning)}
   const edit=document.createElement('button');edit.className='subtle';edit.textContent='Recrop';edit.onclick=async()=>{
    S.edit=i;S.page=q.rect.page;S.select={...q.rect};
    $('qNumber').value=q.num;$('qSubject').value=q.subject;$('qType').value=q.type;typeChanged();
