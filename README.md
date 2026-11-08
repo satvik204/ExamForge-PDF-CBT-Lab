@@ -1,53 +1,43 @@
 # ExamForge PDF → CBT Lab
 
-A standalone, static prototype designed to test **reliable PDF-to-CBT conversion** before integrating the converter into the main ExamForge site. No Google login, admin account, Firebase, database, or backend is needed.
+Public, static PDF-to-CBT prototype. Its primary workflow is now **automatic question detection and batch cropping** from text-selectable JEE question paper PDFs. The original images preserve mathematical typesetting, equations and diagrams without OCR rewriting. The manual crop tool remains for correcting uncertain results.
 
-## What works
+## Quick start
 
-- Upload a locally selected PDF and render its pages using PDF.js.
-- Zoom and navigate pages; select a complete question by drawing a rectangle over the PDF.
-- Recrop, edit metadata, remove saved crops, and keep the image of each question in the browser tab.
-- Set subject, single-choice or numerical answer, question number, marks and exam duration.
-- Fill/review an answer key, run a JEE-style CBT with timer, question palette, review marking, options, zoom, score and report.
-- Generate an **EF1** code containing the question images and entered answers, compatible with the ASTRA ExamForge EF1 structure for tests within the host's size limit (typically 900 KB in the current ASTRA generator).
+Open the GitHub Pages site or `index.html` in Chrome with internet access, then:
 
-## Deliberate limits
+1. Upload your JEE question-paper PDF (up to 60 MB).
+2. Open **Question crops** and choose the paper's subject sequence (for many NTA prints: Mathematics → Physics → Chemistry).
+3. Click **⚡ Auto-detect & crop all questions**. The app scans PDF text coordinates, finds numbered questions, and generates batches of original-PDF image crops.
+4. Review the detected count and flagged items. Ideally it finds **75**. Use **Recrop** for any incomplete, short, long, or page-spanning question. Check subject ordering and MCQ/numerical assignments, especially if the document's layout differs.
+5. Enter and **verify** the corresponding question paper's answer key. The program does not guess the key.
+6. Start CBT with timer, palette, zoom, mark-for-review and scoring. Optionally export ExamForge EF1 code; image-embedded codes may exceed the main ExamForge live room limit.
 
-- **Cropping is manual** in this first reliability test. We do not claim that question boundaries or answers are automatically detected. This avoids the original app's OCR mangling mathematical expressions and diagrams.
-- The user must verify the answer key; this tool never guesses.
-- PDF.js loads from a CDN and requires an internet connection on first visit. No user PDF data is sent to the CDN.
-- The cropped question may contain four printed options in its image. CBT answer selection is **A/B/C/D** in the interface; there is no separate OCR of option text. Numerical answers use a number field.
-- Export contains image data, which can exceed the main ExamForge site's 900 KB limit for large papers; the lab's CBT player itself can still run in-tab. We will optimize this during integration.
-- No permanent storage; reloading clears the paper and crops. Export a CBT code before closing.
-- If the original PDF has security restrictions or invalid contents, it may fail to render.
+## How the new auto-detector works
 
-## Run locally
+- `auto-detect.js` obtains text items and coordinates from PDF.js. It recognizes explicit markers such as `Question Number : 1`, `Q. 1`, `Q1`, and conservative numbered paragraph headings. It also attempts two-column splitting.
+- It computes each crop's bounding rectangle from the current question marker to the next marker, then **renders the PDF page** to a canvas and saves each question image.
+- Scanning and batch crop generation run inside your browser. PDFs are not uploaded to our server.
+- It warns if the detected count is not 75 and flags suspicious or page-ending crops. It preserves manual selection, preview and recropping for corrections.
+- **Limitations:** Scanned/image-only pages have no selectable text; those require OCR or manual intervention. A question can span two pages, and complicated multi-column layouts, papers containing answer keys, unusual question labels and answer-option numbering can cause missing/extra crops. Crops and subject/type inference must be checked before an exam is considered accurate. This is an improved prototype, not a guaranteed 75/75 detector.
+- If scanned PDFs become a common source, the next step is an explicitly reviewed OCR fallback, not pretending PDF text extraction sees pixels.
 
-Either open `index.html` in a modern browser with Internet enabled or use a local static server for more consistent browser behavior:
+## Local development
 
 ```bash
 python -m http.server 8000
 ```
 
-Then open `http://localhost:8000`.
+Open `http://localhost:8000`. Alternatively, publish the four root files `index.html`, `styles.css`, `auto-detect.js`, `app.js` (plus this README) on GitHub Pages.
 
-## Publish as a public GitHub Pages repository
+## Validation
 
-1. On GitHub, create a new **Public** repository, e.g. `ExamForge-PDF-CBT-Lab`.
-2. Upload **`index.html`, `styles.css`, `app.js`, `README.md`** to the repository root, or drag them from the downloaded ZIP.
-3. Go to **Settings → Pages → Build and deployment** → choose **Deploy from a branch**, branch `main`, folder `/ (root)`, and save.
-4. Once GitHub reports deployment, the web app appears at `https://YOUR_USERNAME.github.io/ExamForge-PDF-CBT-Lab/`.
-5. Run the PDF sample test, crop one real question, enter its correct answer, take the test, and verify the export.
+```bash
+node tests/auto-detect.mjs
+```
 
-## Test checklist
+The tests cover JavaScript syntax, HTML IDs, script order, numbered-question patterns, and a synthetic 75-question detector. A successful test **does not prove** reliable extraction on every publisher's PDFs; test with a real JEE paper and inspect crops and diagrams.
 
-- Upload `ExamForge_Sample_Question_Paper.pdf` (if you have it).
-- Navigate to another PDF page and back, zoom to 150%.
-- Crop question with all options; choose subject/answer, save; recrop it.
-- Add numerical question; enter correct numerical answer.
-- Start CBT, try magnification, palette, mark for review and submission.
-- Export EF1 and copy it; verify the full code is present.
+## Future integration
 
-## Integration plan
-
-Once image cropping and local CBT work: extract `loadPdf`, PDF.js rendering, normalized crop geometry, `cropImage`, question editor, and the EF1 exporter from `app.js` and integrate them into the main ExamForge converter. Integrate Google sign-in, admins, rooms and Firebase only afterward. The prototype has no third-party auth credentials.
+Keep this public prototype separate from your existing ExamForge authentication, admin panels, Firebase rooms, reports and Google sign-in. After you verify the conversion flow against real papers, integrate the scanner and crop-review experience into the main ExamForge PDF converter only.
