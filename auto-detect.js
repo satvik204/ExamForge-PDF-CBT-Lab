@@ -84,7 +84,7 @@
    const result=[],warnings=[];
    for(const page of pages){
      if(page.error){warnings.push('Page '+page.page+': '+page.error);continue;}
-     if(page.lineCount<6)warnings.push('Page '+page.page+': very little selectable text. Scanned PDFs need OCR.');
+     if(page.lineCount<6&&!page.anchors?.length)warnings.push('Page '+page.page+': little selectable text and no question markers. Scanned PDFs may need OCR.');
      const anchors=page.anchors||[];
      // Detect two-column sheets only if both halves contain multiple question anchors.
      const left=anchors.filter(a=>a.x<a.width*.49),right=anchors.filter(a=>a.x>=a.width*.49);
