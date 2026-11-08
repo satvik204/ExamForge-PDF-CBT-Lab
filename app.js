@@ -204,7 +204,7 @@ async function scanQuestions(){
   notify(e.message);
   console.error('Automatic scan:',e);
  }finally{
-  activeScan=false;cancelScan=false;$('autoDetectBtn').disabled=false;$('autoCancelBtn').hidden=true;
+  activeScan=false;cancelScan=false;$('autoDetectBtn').disabled=false;$('autoCancelBtn').hidden=true;$('autoCancelBtn').disabled=false;
  }
 }
 $('autoDetectBtn').onclick=scanQuestions;
