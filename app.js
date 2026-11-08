@@ -95,6 +95,21 @@ $('saveCrop').onclick=async()=>{
    Ambiguous boundaries (and pages without selectable text) are flagged, never silently trusted.
 */
 let activeScan=false, cancelScan=false;
+function scanFailure(message){
+ const text=String(message||'Unknown scan error');
+ const report=$('autoScanReport');
+ if(report){
+   report.replaceChildren();
+   const heading=document.createElement('strong');heading.textContent='Auto-detect could not finish';
+   const detail=document.createElement('p');detail.className='scan-error';detail.textContent=text;
+   const help=document.createElement('p');help.className='hint';
+   help.textContent='Check that the PDF is loaded and contains selectable question numbers (Q1, Question Number: 1, etc.). For scanned/image-only PDFs, text-based auto-detection cannot work without OCR.';
+   report.append(heading,detail,help);
+ }
+ $('autoScanPill').textContent='NEEDS ATTENTION';
+ $('autoProgressLabel').textContent=text;
+ notify(text);
+}
 function scanProgress(frac,message){
  $('autoProgressBar').style.width=(Math.round(Math.max(0,Math.min(1,frac))*100))+'%';
  $('autoProgressLabel').textContent=message;
@@ -121,11 +136,13 @@ function scanSummary(candidates,warnings){
  box.append(list);
 }
 async function scanQuestions(){
- if(activeScan)return;
- if(!S.doc)return notify('Upload a question paper first.');
- if(!window.ExamForgeAutoDetect)return notify('Question detector did not load. Refresh the page.');
+ if(activeScan){scanProgress(0,'A scan is already running.');return;}
+ if(!S.doc){scanFailure('No PDF loaded. Upload your question paper in Import PDF before clicking Auto-detect.');return;}
+ if(!window.ExamForgeAutoDetect){scanFailure('Detector script failed to load. Refresh with Ctrl+Shift+R and check the browser console.');return;}
  if(S.questions.length&&!confirm('Replace the current question crops with newly detected ones? Your existing answers will be cleared.'))return;
  activeScan=true;cancelScan=false;
+ $('autoScanReport').textContent='Reading selectable text in the uploaded PDF. This can take a little time for large papers.';
+ scanProgress(0,'Starting scan of '+S.doc.numPages+' PDF pages…');
  $('autoDetectBtn').disabled=true;$('autoCancelBtn').hidden=false;
  $('autoScanPill').textContent='SCANNING';
  const engine=window.ExamForgeAutoDetect;
@@ -133,20 +150,22 @@ async function scanQuestions(){
   const pages=[];
   for(let n=1;n<=S.doc.numPages;n++){
    if(cancelScan)throw Error('Scan cancelled; existing questions were not changed');
-   scanProgress((n-1)/S.doc.numPages*.48,'Reading PDF text: page '+n+' / '+S.doc.numPages);
+   scanProgress((n-1)/S.doc.numPages*.48,'Reading question markers: page '+n+' / '+S.doc.numPages);
    try{
     const page=await S.doc.getPage(n);
     const viewport=page.getViewport({scale:1});
     const text=await page.getTextContent({normalizeWhitespace:true});
     const lines=engine.getLines(text,viewport,pdfjsLib);
     pages.push(engine.detectPage(lines,n));
+    scanProgress(n/S.doc.numPages*.48,'Read page '+n+' / '+S.doc.numPages+' · '+pages.reduce((sum,p)=>sum+(p.anchors?.length||0),0)+' possible questions so far');
    }catch(e){
     pages.push({page:n,error:e.message,lineCount:0,anchors:[]});
    }
    if(n%4===0)await new Promise(r=>setTimeout(r,0));
   }
   const plan=engine.planPages(pages);
-  if(!plan.candidates.length)throw Error('No numbered questions found. For scanned/image-only PDFs use an OCR-enabled version or manual crop.');
+  const scannedPages=pages.filter(p=>p.lineCount<3).length;
+  if(!plan.candidates.length)throw Error('Found 0 numbered questions in '+S.doc.numPages+' pages. '+scannedPages+' pages have almost no selectable text. This PDF may be scanned or use question numbering the detector does not yet recognize.');
   if(plan.candidates.length>180)throw Error('Detected too many possible questions ('+plan.candidates.length+'). Review the PDF layout before converting.');
   const orders=$('autoSubjectOrder').value.split(',');
   const candidates=plan.candidates;
@@ -199,9 +218,7 @@ async function scanQuestions(){
   $('autoScanPill').textContent=plan.candidates.length===75?'REVIEW CROPS':'NEEDS REVIEW';
   notify('Automatically cropped '+S.questions.length+' candidates. Review flagged questions; no answers were guessed.');
  }catch(e){
-  $('autoScanPill').textContent='CHECK PDF';
-  scanProgress(0,e.message);
-  notify(e.message);
+  scanFailure(e.message);
   console.error('Automatic scan:',e);
  }finally{
   activeScan=false;cancelScan=false;$('autoDetectBtn').disabled=false;$('autoCancelBtn').hidden=true;$('autoCancelBtn').disabled=false;
@@ -372,3 +389,4 @@ $('downloadCode').onclick=()=>{
 };
 window.addEventListener('beforeunload',()=>clearInterval(S.timer));
 updateCount();renderSaved();
+if($('autoProgressLabel'))$('autoProgressLabel').textContent='Ready. Upload a PDF, then click Auto-detect & crop all questions.';
