@@ -45,6 +45,33 @@ const planned=e.planPages([detection]);
 assert.equal(planned.candidates.length,3);
 assert.ok(planned.candidates[0].rect.h>.1);
 assert.equal(planned.candidates[2].flags.length>0,true);
+// Regression: a single giant Q4 crop must be split at standalone Q5 and Q6 labels.
+const mergedPage=e.detectPage([
+ sample(4,80,30),
+ {text:'4th question body',x:50,y:125,right:210,pageWidth:700,pageHeight:900},
+ {text:'5.',x:32,y:300,right:46,pageWidth:700,pageHeight:900},
+ {text:'Q5 body begins here',x:50,y:330,right:260,pageWidth:700,pageHeight:900},
+ {text:'6.',x:32,y:515,right:46,pageWidth:700,pageHeight:900},
+ {text:'Q6 body begins here',x:50,y:550,right:260,pageWidth:700,pageHeight:900},
+ sample(7,740,30)
+],1);
+const recovered=e.planPages([mergedPage]);
+assert.deepEqual(Array.from(recovered.candidates.map(q=>q.printedNumber)),[4,5,6,7],
+ 'Q4, Q5, Q6 and Q7 must become distinct crops');
+assert.equal(recovered.recoveredCount,2);
+assert.ok(recovered.candidates[0].rect.h<.4,'Q4 must not swallow Q5/Q6');
+assert.ok(recovered.candidates[1].flags.some(x=>x.includes('Recovered standalone')));
+assert.ok(recovered.candidates[2].flags.some(x=>x.includes('Recovered standalone')));
+// Recover explicit marker PDF fragments even when separate pieces are joined.
+const fragmentPage=e.detectPage([
+ {text:'Question Number : 10',x:35,y:100,right:200,pageWidth:700,pageHeight:900,
+   parts:[{text:'Question Number : 10',x:35,y:100,w:120}]},
+ {text:'11.',x:35,y:320,right:54,pageWidth:700,pageHeight:900,
+   parts:[{text:'11.',x:35,y:320,w:19}]},
+ {text:'Question Number : 12',x:35,y:560,right:200,pageWidth:700,pageHeight:900}
+],1);
+const fragmented=e.planPages([fragmentPage]);
+assert.deepEqual(Array.from(fragmented.candidates.map(q=>q.printedNumber)),[10,11,12]);
 const twoColumns=e.detectPage([
  sample(1,90,30),sample(2,340,30),sample(3,630,30),
  sample(4,90,400),sample(5,340,400),sample(6,630,400)
