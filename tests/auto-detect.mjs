@@ -14,8 +14,8 @@ for(const file of ['app.js','auto-detect.js']){
 const ids=new Set([...html.matchAll(/\bid="([^"]+)"/g)].map(x=>x[1]));
 const used=new Set([...app.matchAll(/\$\('([^']+)'\)/g)].map(x=>x[1]));
 assert.deepEqual([...used].filter(id=>!ids.has(id)),[],'References to nonexistent HTML elements');
-for(const id of ['autoDetectBtn','autoCancelBtn','autoSubjectOrder','autoProgressBar','autoProgressLabel','autoScanReport','autoScanPill'])assert.ok(ids.has(id));
-assert.ok(html.includes('src="auto-detect.js?v=20261108-2"'));
+for(const id of ['autoDetectBtn','autoCancelBtn','autoSubjectOrder','autoProgressBar','autoProgressLabel','autoScanReport','autoScanPill','downloadScanReportBtn'])assert.ok(ids.has(id));
+assert.ok(html.includes('src="auto-detect.js?v=20261108-3"'));
 assert.ok(html.indexOf('src="auto-detect.js')<html.indexOf('src="app.js'));
 const ctx={window:{}};
 vm.runInNewContext(scan,ctx,{timeout:1000});
