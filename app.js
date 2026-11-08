@@ -20,6 +20,7 @@ async function importPdf(file){
   const doc=await pdfjsLib.getDocument({data:b}).promise;
   if(doc.numPages>250)throw Error('Maximum 250 PDF pages.');
   if(S.doc)await S.doc.destroy().catch(()=>{});
+  latestScanReport=null;$('downloadScanReportBtn').disabled=true;
   S.doc=doc;S.page=1;S.zoom=1.25;S.questions=[];S.select=null;S.edit=-1;S.code='';S.exam=null;
   $('testTitle').value=file.name.replace(/\.pdf$/i,'').replace(/[_-]/g,' ').slice(0,140);
   $('exportOutput').value='';$('copyCode').disabled=true;$('downloadCode').disabled=true;
@@ -95,6 +96,15 @@ $('saveCrop').onclick=async()=>{
    Ambiguous boundaries (and pages without selectable text) are flagged, never silently trusted.
 */
 let activeScan=false, cancelScan=false;
+let latestScanReport=null;
+$('downloadScanReportBtn').onclick=()=>{
+ if(!latestScanReport)return notify('Run auto-detect first.');
+ const blob=new Blob([JSON.stringify(latestScanReport,null,2)],{type:'application/json'});
+ const url=URL.createObjectURL(blob),a=document.createElement('a');
+ a.href=url;a.download='ExamForge_scan_report_'+Date.now()+'.json';
+ a.click();setTimeout(()=>URL.revokeObjectURL(url),3000);
+};
+
 function scanFailure(message){
  const text=String(message||'Unknown scan error');
  const report=$('autoScanReport');
@@ -141,6 +151,7 @@ async function scanQuestions(){
  if(!window.ExamForgeAutoDetect){scanFailure('Detector script failed to load. Refresh with Ctrl+Shift+R and check the browser console.');return;}
  if(S.questions.length&&!confirm('Replace the current question crops with newly detected ones? Your existing answers will be cleared.'))return;
  activeScan=true;cancelScan=false;
+ latestScanReport=null;$('downloadScanReportBtn').disabled=true;
  $('autoScanReport').textContent='Reading selectable text in the uploaded PDF. This can take a little time for large papers.';
  scanProgress(0,'Starting scan of '+S.doc.numPages+' PDF pages…');
  $('autoDetectBtn').disabled=true;$('autoCancelBtn').hidden=false;
@@ -164,6 +175,17 @@ async function scanQuestions(){
    if(n%4===0)await new Promise(r=>setTimeout(r,0));
   }
   const plan=engine.planPages(pages);
+  latestScanReport={
+    created:new Date().toISOString(),pageCount:S.doc.numPages,
+    detectionCount:plan.candidates.length,
+    missingPrintedNumbers:plan.missingNumbers,
+    pagesWithoutHeadings:plan.pagesWithoutHeadings,
+    warnings:plan.warnings,
+    // No question contents or private PDF bytes: only heading markers and page coordinates.
+    pages:pages.map(p=>({page:p.page,lines:p.lineCount||0,error:p.error||null,
+      headings:(p.anchors||[]).map(a=>({number:a.number,x:a.x,y:a.y,style:a.style,confidence:a.confidence}))}))
+  };
+  $('downloadScanReportBtn').disabled=false;
   const scannedPages=pages.filter(p=>p.lineCount<3).length;
   if(!plan.candidates.length)throw Error('Found 0 numbered questions in '+S.doc.numPages+' pages. '+scannedPages+' pages have almost no selectable text. This PDF may be scanned or use question numbering the detector does not yet recognize.');
   if(plan.candidates.length>180)throw Error('Detected too many possible questions ('+plan.candidates.length+'). Review the PDF layout before converting.');
